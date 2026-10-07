@@ -18,10 +18,14 @@ use tasks::Task;
 const KEY: &str = "arch,task,length,init,regulariser,rate,seed,hidden,max_updates";
 const KEY_FIELDS: usize = 9;
 
-/// Lengths chosen from the calibration runs: one length that most conditions solve,
-/// one in the transition and one that most fail.
-const MAIN_LENGTHS: [(Task, [usize; 3]); 2] =
-    [(Task::Adding, [50, 100, 200]), (Task::Recall, [15, 20, 30])];
+/// Lengths chosen from the calibration runs (plans `calibrate` and `calibrate_long`):
+/// adding 100 is solved by every unregularised network, 200 and 400 by all but the
+/// conventionally initialised LSTM; recall 30 is solved slowly with conventional
+/// initialisation, 45 and 250 only with chrono initialisation.
+const MAIN_LENGTHS: [(Task, [usize; 3]); 2] = [
+    (Task::Adding, [100, 200, 400]),
+    (Task::Recall, [30, 45, 250]),
+];
 
 fn config(
     arch: Arch,
@@ -75,6 +79,24 @@ fn plan(name: &str) -> Vec<Config> {
                                     seed,
                                 ));
                             }
+                        }
+                    }
+                }
+            }
+        }
+        "calibrate_long" => {
+            for seed in 0..2 {
+                for arch in archs {
+                    for init in inits {
+                        for length in [120, 250, 500] {
+                            configs.push(config(
+                                arch,
+                                Task::Recall,
+                                length,
+                                init,
+                                Regulariser::None,
+                                seed,
+                            ));
                         }
                     }
                 }

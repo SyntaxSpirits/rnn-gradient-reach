@@ -1,0 +1,25 @@
+calibrate_long: 24 runs to do, 0 already done
+[4/24] lstm,recall,120,chrono,none,0,0,64,5000 solved_at=Some(500) test=1.0000 22s
+[5/24] lstm,recall,250,chrono,none,0,0,64,5000 solved_at=Some(1000) test=1.0000 83s
+[10/24] gru,recall,120,chrono,none,0,0,64,5000 solved_at=Some(900) test=1.0000 28s
+[7/24] gru,recall,120,conventional,none,0,0,64,5000 solved_at=None test=0.1250 126s
+[6/24] lstm,recall,500,chrono,none,0,0,64,5000 solved_at=Some(1000) test=1.0000 167s
+[1/24] lstm,recall,120,conventional,none,0,0,64,5000 solved_at=None test=0.1250 168s
+[11/24] gru,recall,250,chrono,none,0,0,64,5000 solved_at=Some(1300) test=1.0000 82s
+[8/24] gru,recall,250,conventional,none,0,0,64,5000 solved_at=None test=0.1250 267s
+[12/24] gru,recall,500,chrono,none,0,0,64,5000 solved_at=Some(1100) test=1.0000 143s
+[16/24] lstm,recall,120,chrono,none,0,1,64,5000 solved_at=Some(600) test=1.0000 28s
+[13/24] lstm,recall,120,conventional,none,0,1,64,5000 solved_at=None test=0.1250 170s
+[17/24] lstm,recall,250,chrono,none,0,1,64,5000 solved_at=Some(800) test=1.0000 72s
+[2/24] lstm,recall,250,conventional,none,0,0,64,5000 solved_at=None test=0.1250 353s
+[18/24] lstm,recall,500,chrono,none,0,1,64,5000 solved_at=Some(800) test=1.0000 144s
+[22/24] gru,recall,120,chrono,none,0,1,64,5000 solved_at=Some(900) test=1.0000 28s
+[19/24] gru,recall,120,conventional,none,0,1,64,5000 solved_at=None test=0.1250 131s
+[14/24] lstm,recall,250,conventional,none,0,1,64,5000 solved_at=None test=0.1250 356s
+[23/24] gru,recall,250,chrono,none,0,1,64,5000 solved_at=Some(1100) test=1.0000 70s
+[9/24] gru,recall,500,conventional,none,0,0,64,5000 solved_at=None test=0.1250 528s
+[20/24] gru,recall,250,conventional,none,0,1,64,5000 solved_at=None test=0.1250 254s
+[24/24] gru,recall,500,chrono,none,0,1,64,5000 solved_at=Some(1200) test=1.0000 133s
+[3/24] lstm,recall,500,conventional,none,0,0,64,5000 solved_at=None test=0.1250 666s
+[21/24] gru,recall,500,conventional,none,0,1,64,5000 solved_at=None test=0.1250 435s
+[15/24] lstm,recall,500,conventional,none,0,1,64,5000 solved_at=None test=0.1250 605s
