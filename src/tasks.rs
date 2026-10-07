@@ -1,6 +1,7 @@
 use ndarray::Array2;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
+use rust_lstm::{CrossEntropyLoss, LossFunction, MSELoss};
 
 pub const RECALL_SYMBOLS: usize = 8;
 
@@ -19,6 +20,8 @@ pub struct Batch {
 }
 
 impl Task {
+    pub const ALL: [Task; 2] = [Task::Adding, Task::Recall];
+
     pub fn name(self) -> &'static str {
         match self {
             Task::Adding => "adding",
@@ -81,6 +84,38 @@ impl Task {
         }
     }
 
+    /// Training loss on a batch of predictions and its gradient: mean squared error for
+    /// adding, softmax cross-entropy for recall.
+    pub fn loss_and_gradient(
+        self,
+        prediction: &Array2<f64>,
+        target: &Array2<f64>,
+    ) -> (f64, Array2<f64>) {
+        match self {
+            Task::Adding => (
+                MSELoss.compute_batch_loss(prediction, target),
+                MSELoss.compute_batch_gradient(prediction, target),
+            ),
+            Task::Recall => (
+                CrossEntropyLoss.compute_loss(prediction, target),
+                CrossEntropyLoss.compute_gradient(prediction, target),
+            ),
+        }
+    }
+
+    /// Mean squared error for adding, accuracy for recall.
+    pub fn metric(self, prediction: &Array2<f64>, target: &Array2<f64>) -> f64 {
+        match self {
+            Task::Adding => MSELoss.compute_batch_loss(prediction, target),
+            Task::Recall => {
+                let hits = (0..target.ncols())
+                    .filter(|&b| argmax(prediction, b) == argmax(target, b))
+                    .count();
+                hits as f64 / target.ncols() as f64
+            }
+        }
+    }
+
     /// Validation metric that counts as solving the task: mean squared error below
     /// 0.01 for adding (predicting 1 gives 1/6), all eight symbols correct for recall.
     pub fn solved(self, metric: f64) -> bool {
@@ -89,6 +124,15 @@ impl Task {
             Task::Recall => metric >= 1.0,
         }
     }
+}
+
+fn argmax(m: &Array2<f64>, column: usize) -> usize {
+    m.column(column)
+        .iter()
+        .enumerate()
+        .max_by(|a, b| a.1.total_cmp(b.1))
+        .map(|(i, _)| i)
+        .unwrap()
 }
 
 fn fixed_rng(purpose: u64, length: usize) -> StdRng {

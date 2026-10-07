@@ -1,3 +1,7 @@
 /target
-/results/pilot*
 /.venv
+/results/*.log
+/results/*/curves/
+/results/pilot*
+/results/*/analysis/
+/results/*/analysis_stdout.txt

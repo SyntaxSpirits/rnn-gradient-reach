@@ -1,322 +1,72 @@
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-mod experiment;
-mod model;
+mod config;
+mod network;
+mod output;
+mod plans;
+mod probe;
+mod runner;
 mod tasks;
+mod training;
 
-use experiment::{run, Config, Outcome};
-use model::{Arch, Init, Regulariser};
-use std::collections::{HashMap, HashSet};
-use std::fs::{self, OpenOptions};
-use std::io::{BufRead, BufReader, BufWriter, Write};
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Mutex;
-use tasks::Task;
+use config::Config;
+use std::path::PathBuf;
+use std::process::ExitCode;
 
-const KEY: &str = "arch,task,length,init,regulariser,rate,seed,hidden,max_updates";
-const KEY_FIELDS: usize = 9;
+const USAGE: &str = "usage:
+  rnn-gradient-reach plan <calibrate|calibrate_long|main> [--jobs N] [--out DIR]
+  rnn-gradient-reach run <key> [--out DIR]
+  rnn-gradient-reach count <plan>
 
-/// Lengths chosen from the calibration runs (plans `calibrate` and `calibrate_long`):
-/// adding 100 is solved by every unregularised network, 200 and 400 by all but the
-/// conventionally initialised LSTM; recall 30 is solved slowly with conventional
-/// initialisation, 45 and 250 only with chrono initialisation.
-const MAIN_LENGTHS: [(Task, [usize; 3]); 2] = [
-    (Task::Adding, [100, 200, 400]),
-    (Task::Recall, [30, 45, 250]),
-];
+A key lists arch,task,length,init,regulariser,rate,seed,hidden,max_updates as in the
+first columns of runs.csv, e.g. lstm,recall,30,chrono,zoneout_cell,0.15,0,64,5000.";
 
-fn config(
-    arch: Arch,
-    task: Task,
-    length: usize,
-    init: Init,
-    regulariser: Regulariser,
-    seed: u64,
-) -> Config {
-    Config {
-        arch,
-        task,
-        length,
-        init,
-        regulariser,
-        rate: match regulariser {
-            Regulariser::None => 0.0,
-            r if r.is_zoneout() => 0.15,
-            _ => 0.25,
-        },
-        seed,
-        hidden: 64,
-        batch: 32,
-        max_updates: 5000,
-        learning_rate: 1e-3,
-        clip: 1.0,
-    }
-}
-
-fn plan(name: &str) -> Vec<Config> {
-    let archs = [Arch::Lstm, Arch::Gru];
-    let inits = [Init::Conventional, Init::Chrono];
-    let mut configs = Vec::new();
-    match name {
-        "calibrate" => {
-            let lengths = [
-                (Task::Adding, vec![50, 100, 200, 400]),
-                (Task::Recall, vec![10, 15, 20, 30, 45, 60]),
-            ];
-            for seed in 0..2 {
-                for arch in archs {
-                    for init in inits {
-                        for (task, ls) in &lengths {
-                            for &length in ls {
-                                configs.push(config(
-                                    arch,
-                                    *task,
-                                    length,
-                                    init,
-                                    Regulariser::None,
-                                    seed,
-                                ));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        "calibrate_long" => {
-            for seed in 0..2 {
-                for arch in archs {
-                    for init in inits {
-                        for length in [120, 250, 500] {
-                            configs.push(config(
-                                arch,
-                                Task::Recall,
-                                length,
-                                init,
-                                Regulariser::None,
-                                seed,
-                            ));
-                        }
-                    }
-                }
-            }
-        }
-        "main" => {
-            for seed in 0..5 {
-                for arch in archs {
-                    for init in inits {
-                        for (task, ls) in MAIN_LENGTHS {
-                            for length in ls {
-                                for regulariser in Regulariser::ALL {
-                                    if arch.supports(regulariser) {
-                                        configs.push(config(
-                                            arch,
-                                            task,
-                                            length,
-                                            init,
-                                            regulariser,
-                                            seed,
-                                        ));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        other => panic!("unknown plan {other}"),
-    }
-    configs
-}
-
-fn key(c: &Config) -> String {
-    format!(
-        "{},{},{},{},{},{},{},{},{}",
-        c.arch.name(),
-        c.task.name(),
-        c.length,
-        c.init.name(),
-        c.regulariser.name(),
-        c.rate,
-        c.seed,
-        c.hidden,
-        c.max_updates
-    )
-}
-
-fn open_csv(path: &Path, columns: &str) -> fs::File {
-    let fresh = !path.exists();
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .unwrap();
-    if fresh {
-        writeln!(file, "{KEY},{columns}").unwrap();
-    }
-    file
-}
-
-fn completed(path: &Path) -> HashSet<String> {
-    let Ok(file) = fs::File::open(path) else {
-        return HashSet::new();
-    };
-    BufReader::new(file)
-        .lines()
-        .skip(1)
-        .map(|l| {
-            l.unwrap()
-                .split(',')
-                .take(KEY_FIELDS)
-                .collect::<Vec<_>>()
-                .join(",")
-        })
-        .collect()
-}
-
-fn write_curves(dir: &Path, o: &Outcome) {
-    let path = dir.join(format!("{}.csv", key(&o.config).replace(',', "_")));
-    let mut f = BufWriter::new(fs::File::create(path).unwrap());
-    writeln!(
-        f,
-        "update,mode,lag,loss_mean,loss_log_mean,loss_zeros,state_mean,state_log_mean,state_zeros"
-    )
-    .unwrap();
-    for p in &o.probes {
-        let mode = if p.training_mode { "train" } else { "eval" };
-        for lag in 0..p.loss.mean.len() {
-            writeln!(
-                f,
-                "{},{mode},{lag},{:e},{:e},{},{:e},{:e},{}",
-                p.update,
-                p.loss.mean[lag],
-                p.loss.log_mean[lag],
-                p.loss.zeros[lag],
-                p.state.mean[lag],
-                p.state.log_mean[lag],
-                p.state.zeros[lag]
-            )
-            .unwrap();
-        }
-    }
-}
-
-fn write_outcome(files: &mut HashMap<&str, fs::File>, curves: &Path, o: &Outcome) {
-    let k = key(&o.config);
-    let solved = o.solved_at.map_or(String::new(), |s| s.to_string());
-    writeln!(
-        files.get_mut("runs").unwrap(),
-        "{k},{solved},{},{},{},{:.1}",
-        o.updates,
-        o.test_loss,
-        o.test_metric,
-        o.seconds
-    )
-    .unwrap();
-    for e in &o.history {
-        writeln!(
-            files.get_mut("history").unwrap(),
-            "{k},{},{},{}",
-            e.update,
-            e.loss,
-            e.metric
-        )
-        .unwrap();
-    }
-    for p in &o.probes {
-        let mode = if p.training_mode { "train" } else { "eval" };
-        let mut values = p.task.clone();
-        values.resize(3, f64::NAN);
-        writeln!(
-            files.get_mut("probes").unwrap(),
-            "{k},{},{mode},{},{},{}",
-            p.update,
-            values[0],
-            values[1],
-            values[2]
-        )
-        .unwrap();
-    }
-    write_curves(curves, o);
-    for f in files.values_mut() {
-        f.flush().unwrap();
-    }
-}
-
-fn run_plan(name: &str, jobs: usize, out: PathBuf) {
-    let curves = out.join("curves");
-    fs::create_dir_all(&curves).unwrap();
-    let runs_path = out.join("runs.csv");
-    let done = completed(&runs_path);
-    let todo: Vec<Config> = plan(name)
-        .into_iter()
-        .filter(|c| !done.contains(&key(c)))
-        .collect();
-    eprintln!(
-        "{name}: {} runs to do, {} already done",
-        todo.len(),
-        done.len()
-    );
-
-    let files = Mutex::new(HashMap::from([
-        (
-            "runs",
-            open_csv(
-                &runs_path,
-                "solved_at,updates,test_loss,test_metric,seconds",
-            ),
-        ),
-        (
-            "history",
-            open_csv(&out.join("history.csv"), "update,loss,metric"),
-        ),
-        (
-            "probes",
-            open_csv(&out.join("probes.csv"), "update,mode,task_1,task_2,task_3"),
-        ),
-    ]));
-    let next = AtomicUsize::new(0);
-    std::thread::scope(|scope| {
-        for _ in 0..jobs {
-            scope.spawn(|| loop {
-                let i = next.fetch_add(1, Ordering::SeqCst);
-                let Some(config) = todo.get(i) else { break };
-                let outcome = run(config);
-                eprintln!(
-                    "[{}/{}] {} solved_at={:?} test={:.4} {:.0}s",
-                    i + 1,
-                    todo.len(),
-                    key(config),
-                    outcome.solved_at,
-                    outcome.test_metric,
-                    outcome.seconds
-                );
-                write_outcome(&mut files.lock().unwrap(), &curves, &outcome);
-            });
-        }
-    });
-}
-
-fn main() {
-    let args: Vec<String> = std::env::args().collect();
-    let value = |flag: &str| {
+fn main() -> ExitCode {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let option = |flag: &str| {
         args.iter()
             .position(|a| a == flag)
-            .map(|i| args[i + 1].clone())
+            .and_then(|i| args.get(i + 1))
     };
-    match args.get(1).map(String::as_str) {
-        Some("plan") => {
-            let name = value("--name").expect("--name calibrate|main");
-            let jobs = value("--jobs").map_or(8, |j| j.parse().unwrap());
-            let out = value("--out").map_or_else(|| PathBuf::from("results").join(&name), PathBuf::from);
-            run_plan(&name, jobs, out);
+    let out = |default: &str| {
+        option("--out").map_or_else(|| PathBuf::from("results").join(default), PathBuf::from)
+    };
+
+    let result = match (args.first().map(String::as_str), args.get(1)) {
+        (Some("plan"), Some(name)) => match plans::plan(name) {
+            Some(configs) => {
+                let jobs = option("--jobs").map_or(Ok(8), |j| j.parse());
+                match jobs {
+                    Ok(jobs) => runner::run_all(configs, &out(name), jobs),
+                    Err(_) => return usage(),
+                }
+            }
+            None => return usage(),
+        },
+        (Some("run"), Some(key)) => match Config::from_key(key) {
+            Some(config) => runner::run_all(vec![config], &out("single"), 1),
+            None => return usage(),
+        },
+        (Some("count"), Some(name)) => match plans::plan(name) {
+            Some(configs) => {
+                println!("{}", configs.len());
+                Ok(())
+            }
+            None => return usage(),
+        },
+        _ => return usage(),
+    };
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("{e}");
+            ExitCode::FAILURE
         }
-        Some("count") => {
-            let name = value("--name").expect("--name calibrate|main");
-            println!("{}", plan(&name).len());
-        }
-        _ => eprintln!("usage: rnn-gradient-reach plan --name calibrate|main [--jobs 8] [--out DIR]\n       rnn-gradient-reach count --name calibrate|main"),
     }
+}
+
+fn usage() -> ExitCode {
+    eprintln!("{USAGE}\n\nplans: {}", plans::NAMES.join(", "));
+    ExitCode::from(2)
 }
