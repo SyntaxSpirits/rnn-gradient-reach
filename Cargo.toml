@@ -1,0 +1,16 @@
+[package]
+name = "rnn-gradient-reach"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "MIT"
+description = "How dropout and zoneout change how far gradients reach back in time in LSTM and GRU networks"
+
+[dependencies]
+rust-lstm = "=0.10.0"
+ndarray = "0.15"
+rand = "0.8"
+mimalloc = { version = "0.1", default-features = false }
+
+[profile.release]
+debug = false
