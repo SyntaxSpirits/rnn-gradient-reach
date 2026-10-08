@@ -7,6 +7,7 @@ e-folding lag) is reported only for decaying curves.
 
 import numpy as np
 import pandas as pd
+from scipy import stats
 
 from .data import KEY
 
@@ -52,13 +53,45 @@ def summarise(curves):
 
 
 def regulariser_effects(reach, update, mode, curve="state"):
-    """Mean change in slope against the unregularised network with the same seed,
-    architecture, initialisation, task and length."""
+    """Change in slope against the unregularised network with the same seed,
+    architecture, initialisation, task and length. Changes are averaged over the task
+    lengths within each seed; the interval is a t interval over the five seed means."""
     r = reach[(reach["update"] == update) & (reach["mode"] == mode)]
     pair = ["task", "length", "arch", "init", "seed"]
     base = r[r["regulariser"] == "none"][pair + [f"{curve}_slope"]]
     merged = r[r["regulariser"] != "none"].merge(base, on=pair, suffixes=("", "_none"))
     merged["change"] = merged[f"{curve}_slope"] - merged[f"{curve}_slope_none"]
-    summary = merged.groupby(["arch", "init", "regulariser"])["change"].agg(["mean", "std", "count"])
-    summary["sem"] = summary["std"] / np.sqrt(summary["count"])
-    return summary.reset_index().assign(update=update, mode=mode)
+    per_seed = merged.groupby(["arch", "init", "regulariser", "seed"])["change"].mean().reset_index()
+    rows = []
+    for (arch, init, regulariser), g in per_seed.groupby(["arch", "init", "regulariser"]):
+        values = g["change"].to_numpy()
+        half = stats.t.ppf(0.975, len(values) - 1) * values.std(ddof=1) / np.sqrt(len(values))
+        rows.append(
+            dict(
+                arch=arch,
+                init=init,
+                regulariser=regulariser,
+                change=values.mean(),
+                low=values.mean() - half,
+                high=values.mean() + half,
+                seeds=len(values),
+            )
+        )
+    return pd.DataFrame(rows).assign(update=update, mode=mode)
+
+
+def fit_quality(reach, update, mode="eval"):
+    """How well one exponential describes the state curves at a checkpoint."""
+    r = reach[(reach["update"] == update) & (reach["mode"] == mode)]
+    return (
+        r.groupby(["task", "length", "arch", "init"])
+        .agg(
+            curves=("state_slope", "size"),
+            median_r2=("state_r2", "median"),
+            r2_below_0_9=("state_r2", lambda v: int((v < 0.9).sum())),
+            positive_slopes=("state_slope", lambda v: int((v > 0).sum())),
+            median_slope=("state_slope", "median"),
+        )
+        .reset_index()
+        .assign(update=update, mode=mode)
+    )

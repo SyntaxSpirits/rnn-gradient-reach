@@ -1,15 +1,22 @@
-"""Does early gradient reach improve the prediction of whether a run will solve its task?
+"""Does early gradient reach help predict whether a run will reach the validation
+criterion?
 
 Landmark design: runs not solved by update 100 are followed to the end of their budget.
-The baseline model uses what is known at the landmark without probing gradients: task,
-log length, architecture, initialisation, regulariser and the log validation loss at
-update 100. The full model adds one gradient summary measured at update 100.
+A gradient-free baseline uses what is known at the landmark: task, length,
+architecture, initialisation, regulariser and the validation loss at update 100. The
+full model adds one gradient summary measured at update 100.
+
+Two baselines are compared. The additive baseline (prespecified before the main grid)
+enters every factor as a main effect. The flexible baseline (added after review) gives
+every task × architecture × initialisation stratum its own intercept and its own
+effects of log length and log landmark loss, plus regulariser main effects.
 
 Models are L2-penalised logistic regressions (C = 1) on standardised features, which
-keeps coefficients finite under the separation this grid produces. Predictions are
-made out of sample, with all runs of a condition held out together (primary), or a
-whole seed, regulariser family or task length held out (secondary). Uncertainty in the
-log-loss improvement comes from resampling conditions.
+keeps coefficients finite under the separation this grid produces. Predictions are made
+out of sample, with all runs of a condition held out together (primary), or a whole
+seed, regulariser family or task length held out. Intervals for the log-loss gain
+resample conditions, or conditions and seeds crossed, holding the out-of-sample
+predictions fixed; they do not include refitting variability.
 """
 
 import numpy as np
@@ -23,8 +30,6 @@ from .data import CONDITION, KEY, condition_label
 
 LANDMARK = 100
 PRIMARY = "state_slope"
-CATEGORICAL = ["task", "arch", "init", "regulariser"]
-BASELINE_NUMERIC = ["log_length", "log_landmark_loss"]
 
 
 def landmark_frame(runs, history, reach, mode="eval"):
@@ -37,13 +42,26 @@ def landmark_frame(runs, history, reach, mode="eval"):
     data["log_length"] = np.log(data["length"])
     data["log_landmark_loss"] = np.log(data["landmark_loss"])
     data["condition"] = condition_label(data)
+    data["stratum"] = data["task"] + "|" + data["arch"] + "|" + data["init"]
+    data["task_length"] = data["task"] + "_" + data["length"].astype(str)
     return data.reset_index(drop=True)
 
 
-def features(data, predictor):
-    columns = BASELINE_NUMERIC + ([predictor] if predictor else [])
-    dummies = pd.get_dummies(data[CATEGORICAL], drop_first=True).astype(float)
-    return pd.concat([dummies, data[columns]], axis=1).to_numpy(float)
+def features(data, predictor, flexible):
+    if flexible:
+        strata = pd.get_dummies(data["stratum"]).astype(float)
+        parts = [strata, pd.get_dummies(data["regulariser"], drop_first=True).astype(float)]
+        for column in ("log_length", "log_landmark_loss"):
+            parts.append(strata.mul(data[column], axis=0).add_suffix(f"*{column}"))
+    else:
+        categorical = ["task", "arch", "init", "regulariser"]
+        parts = [
+            pd.get_dummies(data[categorical], drop_first=True).astype(float),
+            data[["log_length", "log_landmark_loss"]],
+        ]
+    if predictor:
+        parts.append(data[[predictor]])
+    return pd.concat(parts, axis=1).to_numpy(float)
 
 
 def fit_predict(x_train, y_train, x_test):
@@ -55,71 +73,122 @@ def fit_predict(x_train, y_train, x_test):
     return model.predict_proba(scaler.transform(x_test))[:, 1]
 
 
-def out_of_sample(data, predictor, groups, folds=None):
-    """Predictions for every run from a model fitted without its group."""
-    usable = data[predictor].notna() if predictor else np.ones(len(data), bool)
-    data = data[usable].reset_index(drop=True)
-    x = features(data, predictor)
-    y = data["solved"].to_numpy(int)
-    g = data[groups].to_numpy() if isinstance(groups, str) else groups[usable]
-    splitter = GroupKFold(n_splits=folds) if folds else None
-    splits = (
-        splitter.split(x, y, g)
-        if splitter
-        else ((np.flatnonzero(g != v), np.flatnonzero(g == v)) for v in np.unique(g))
-    )
+def splits(groups, folds):
+    if folds:
+        return GroupKFold(n_splits=folds).split(np.zeros(len(groups)), groups=groups)
+    return ((np.flatnonzero(groups != g), np.flatnonzero(groups == g)) for g in np.unique(groups))
+
+
+def out_of_sample(data, predictor, groups, folds, flexible, outcome):
+    x = features(data, predictor, flexible)
+    y = data[outcome].to_numpy(int)
     p = np.zeros(len(y))
-    for train, test in splits:
+    for train, test in splits(data[groups].to_numpy(), folds):
         p[test] = fit_predict(x[train], y[train], x[test])
-    return data, p
+    return p
 
 
-def scores(y, p):
+def scores(y, p, weights=None):
     p = np.clip(p, 1e-9, 1 - 1e-9)
     return {
-        "log_loss": log_loss(y, p, labels=[0, 1]),
-        "brier": brier_score_loss(y, p),
-        "auc": roc_auc_score(y, p) if len(set(y)) == 2 else np.nan,
+        "log_loss": log_loss(y, p, labels=[0, 1], sample_weight=weights),
+        "brier": brier_score_loss(y, p, sample_weight=weights),
+        "auc": roc_auc_score(y, p, sample_weight=weights) if len(set(y)) == 2 else np.nan,
     }
 
 
-def compare(data, predictor, groups, rng, folds=None, resamples=2000):
-    """Baseline against baseline plus `predictor` on the same runs."""
-    usable = data[data[predictor].notna()].reset_index(drop=True)
-    _, base = out_of_sample(usable, None, groups, folds)
-    _, full = out_of_sample(usable, predictor, groups, folds)
-    y = usable["solved"].to_numpy(int)
-    result = {"runs": len(y), "events": int(y.sum())}
-    result.update({f"baseline_{k}": v for k, v in scores(y, base).items()})
-    result.update({f"full_{k}": v for k, v in scores(y, full).items()})
-    result["improvement"] = result["baseline_log_loss"] - result["full_log_loss"]
+def gain(y, base, full, weights=None):
+    return scores(y, base, weights)["log_loss"] - scores(y, full, weights)["log_loss"]
 
-    conditions = usable["condition"].to_numpy()
+
+def condition_interval(frame, y, base, full, rng, resamples):
+    conditions = frame["condition"].to_numpy()
     members = {c: np.flatnonzero(conditions == c) for c in np.unique(conditions)}
     names = np.array(list(members))
     draws = []
     for _ in range(resamples):
         pick = np.concatenate([members[c] for c in rng.choice(names, len(names))])
-        draws.append(scores(y[pick], base[pick])["log_loss"] - scores(y[pick], full[pick])["log_loss"])
-    result["improvement_low"], result["improvement_high"] = np.percentile(draws, [2.5, 97.5])
-    return result, usable.assign(baseline=base, full=full)
+        draws.append(gain(y[pick], base[pick], full[pick]))
+    return np.percentile(draws, [2.5, 97.5])
+
+
+def crossed_interval(frame, y, base, full, rng, resamples):
+    """Resamples conditions and seeds independently; a run enters as often as its
+    condition and its seed were drawn."""
+    conditions = frame["condition"].to_numpy()
+    seeds = frame["seed"].to_numpy()
+    names, seed_ids = np.unique(conditions), np.unique(seeds)
+    condition_index = np.searchsorted(names, conditions)
+    seed_index = np.searchsorted(seed_ids, seeds)
+    draws = []
+    for _ in range(resamples):
+        c = np.bincount(rng.integers(0, len(names), len(names)), minlength=len(names))
+        s = np.bincount(rng.integers(0, len(seed_ids), len(seed_ids)), minlength=len(seed_ids))
+        weights = c[condition_index] * s[seed_index]
+        keep = weights > 0
+        if len(set(y[keep])) == 2:
+            draws.append(gain(y[keep], base[keep], full[keep], weights[keep]))
+    return np.percentile(draws, [2.5, 97.5])
+
+
+def compare(
+    data,
+    predictor,
+    groups,
+    rng,
+    folds=None,
+    flexible=False,
+    outcome="solved",
+    crossed=False,
+    resamples=2000,
+):
+    """Gradient-free baseline against baseline plus `predictor`, on the same runs."""
+    frame = data[data[predictor].notna()].reset_index(drop=True)
+    y = frame[outcome].to_numpy(int)
+    base = out_of_sample(frame, None, groups, folds, flexible, outcome)
+    full = out_of_sample(frame, predictor, groups, folds, flexible, outcome)
+    result = {"runs": len(y), "events": int(y.sum())}
+    result.update({f"baseline_{k}": v for k, v in scores(y, base).items()})
+    result.update({f"full_{k}": v for k, v in scores(y, full).items()})
+    result["gain"] = gain(y, base, full)
+    result["gain_low"], result["gain_high"] = condition_interval(frame, y, base, full, rng, resamples)
+    if crossed:
+        result["crossed_low"], result["crossed_high"] = crossed_interval(frame, y, base, full, rng, resamples)
+    if not folds:
+        per_group = [
+            gain(y[m], base[m], full[m])
+            for m in (frame[groups].to_numpy() == g for g in frame[groups].unique())
+        ]
+        result["groups"] = len(per_group)
+        result["groups_with_gain"] = int(np.sum(np.array(per_group) > 0))
+        result["worst_group_gain"] = min(per_group)
+    return result, frame.assign(baseline=base, full=full)
 
 
 def within_condition_auc(data, predictor, rng, resamples=2000):
-    """Concordance between the predictor and success among runs of the same condition,
-    using only conditions with both outcomes."""
+    """Concordance between `predictor` and reaching the criterion among runs of the same
+    condition (higher predictor, more likely solved), using only conditions with both
+    outcomes; the interval resamples conditions."""
     pairs = []
     for _, g in data.groupby(CONDITION):
         solved = g.loc[g["solved"], predictor].to_numpy()
         failed = g.loc[~g["solved"], predictor].to_numpy()
         if len(solved) and len(failed):
-            pairs.append((solved[:, None] > failed[None, :]).astype(float) + 0.5 * (solved[:, None] == failed[None, :]))
+            pairs.append(
+                (solved[:, None] > failed[None, :]) + 0.5 * (solved[:, None] == failed[None, :])
+            )
     if not pairs:
         return {"conditions": 0}
-    estimate = np.concatenate([p.ravel() for p in pairs]).mean()
     draws = [
         np.concatenate([pairs[i].ravel() for i in rng.integers(0, len(pairs), len(pairs))]).mean()
         for _ in range(resamples)
     ]
     low, high = np.percentile(draws, [2.5, 97.5])
-    return {"conditions": len(pairs), "auc": estimate, "auc_low": low, "auc_high": high}
+    return {
+        "conditions": len(pairs),
+        "runs": int(sum(p.shape[0] + p.shape[1] for p in pairs)),
+        "pairs": int(sum(p.size for p in pairs)),
+        "auc": np.concatenate([p.ravel() for p in pairs]).mean(),
+        "auc_low": low,
+        "auc_high": high,
+    }

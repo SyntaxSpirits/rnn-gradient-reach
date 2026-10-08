@@ -1,0 +1,6 @@
+experiment commit: a54e1cbbc18a89be0c93c7b0c83c933d69ef5692
+rust-lstm: name = "rust-lstm" version = "0.10.0" source = "registry+https://github.com/rust-lang/crates.io-index" 
+rustc: rustc 1.86.0 (05f9846f8 2025-03-31) (Homebrew)
+machine: Apple M1 Pro, 8 cores, macOS 14.5
+started: 2026-10-08T02:16:37Z
+command: rnn-gradient-reach plan more_seeds --jobs 8

@@ -4,14 +4,14 @@ Validation happens every 100 updates, so the event is observed in intervals. Eac
 risk contributes one row per interval from update 200 until it solves the task or its
 budget ends (right-censored). The hazard of solving in an interval is modelled by an
 L2-penalised logistic regression on the log of the interval's update, the landmark
-baseline features and the gradient summary. The coefficient of the standardised
-summary is reported with an interval from resampling conditions.
+baseline features and the gradient summary. The coefficient is per across-run standard
+deviation of the summary, an adjusted association rather than a causal effect, with an
+interval from refitting on resampled conditions.
 """
 
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
-from sklearn.preprocessing import StandardScaler
 
 from .prediction import LANDMARK, features
 
@@ -29,11 +29,13 @@ def person_period(data):
 
 
 def hazard_coefficient(data, predictor, periods):
-    x_runs = features(data, predictor)
-    x = np.column_stack([x_runs[periods["run"]], np.log(periods["update"].to_numpy(float))])
-    scaler = StandardScaler().fit(x)
+    """Coefficient of the predictor, standardised across runs, in the interval hazard."""
+    x_runs = features(data, predictor, flexible=False)
+    x_runs = (x_runs - x_runs.mean(axis=0)) / np.where(x_runs.std(axis=0) > 0, x_runs.std(axis=0), 1.0)
+    log_update = np.log(periods["update"].to_numpy(float))
+    x = np.column_stack([x_runs[periods["run"]], (log_update - log_update.mean()) / log_update.std()])
     model = LogisticRegression(C=1.0, max_iter=10_000)
-    model.fit(scaler.transform(x), periods["event"].to_numpy(int))
+    model.fit(x, periods["event"].to_numpy(int))
     return model.coef_[0][x_runs.shape[1] - 1]
 
 

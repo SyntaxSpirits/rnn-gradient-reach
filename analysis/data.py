@@ -1,7 +1,6 @@
 import glob
 import os
 
-import numpy as np
 import pandas as pd
 
 KEY = ["arch", "task", "length", "init", "regulariser", "rate", "seed", "hidden", "max_updates"]
@@ -15,6 +14,7 @@ FAMILY = {
     "zoneout_hidden": "zoneout",
     "zoneout_both": "zoneout",
 }
+TEST_THRESHOLD = {"adding": lambda mse: mse < 0.01, "recall": lambda accuracy: accuracy >= 1.0}
 
 
 def key_from_file_name(name):
@@ -37,9 +37,20 @@ def key_from_file_name(name):
     )
 
 
-def load(root):
+def load_runs(root):
     runs = pd.read_csv(os.path.join(root, "runs.csv"))
-    history = pd.read_csv(os.path.join(root, "history.csv"))
+    runs["solved"] = runs["solved_at"].notna()
+    passes_test = [TEST_THRESHOLD[t](m) for t, m in zip(runs["task"], runs["test_metric"])]
+    runs["solved_on_test"] = runs["solved"] & pd.Series(passes_test, index=runs.index)
+    runs["family"] = runs["regulariser"].map(FAMILY)
+    return runs
+
+
+def load(root):
+    """Runs, validation history and gradient curves of one results directory. A run
+    interrupted and rerun on resume may repeat identical history rows; they are dropped."""
+    runs = load_runs(root)
+    history = pd.read_csv(os.path.join(root, "history.csv")).drop_duplicates()
     curves = []
     for path in sorted(glob.glob(os.path.join(root, "curves", "*.csv"))):
         frame = pd.read_csv(path)
@@ -47,9 +58,11 @@ def load(root):
             frame[column] = value
         curves.append(frame)
     curves = pd.concat(curves, ignore_index=True)
-    runs["solved"] = runs["solved_at"].notna()
-    runs["family"] = runs["regulariser"].map(FAMILY)
     return runs, history, curves
+
+
+def load_probes(root):
+    return pd.read_csv(os.path.join(root, "probes.csv")).drop_duplicates()
 
 
 def condition_label(frame):
@@ -58,8 +71,3 @@ def condition_label(frame):
 
 def censored_time(runs):
     return runs["solved_at"].fillna(runs["max_updates"]).astype(float)
-
-
-def log_or_nan(values):
-    values = np.asarray(values, float)
-    return np.where(values > 0, np.log(np.where(values > 0, values, 1.0)), np.nan)
