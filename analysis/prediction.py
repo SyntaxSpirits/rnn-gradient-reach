@@ -165,30 +165,72 @@ def compare(
     return result, frame.assign(baseline=base, full=full)
 
 
+def within_condition_pairs(data, predictor):
+    """Every pair of a run that reached the criterion and one that did not, within the
+    same condition, scored 1 if the first has the larger predictor, 1/2 for a tie."""
+    rows = []
+    for condition, g in data.groupby(CONDITION):
+        solved, failed = g[g["solved"]], g[~g["solved"]]
+        for _, a in solved.iterrows():
+            for _, b in failed.iterrows():
+                score = float(a[predictor] > b[predictor]) + 0.5 * float(a[predictor] == b[predictor])
+                rows.append(("|".join(map(str, condition)), a["seed"], b["seed"], score))
+    return pd.DataFrame(rows, columns=["condition", "seed_solved", "seed_failed", "score"])
+
+
+def pair_intervals(pairs, values, rng, resamples):
+    """95 % intervals for the weighted mean of `values` over pairs, resampling
+    conditions, seeds (a pair counts once per draw of each of its two seeds) and both."""
+    conditions = pairs["condition"].to_numpy()
+    names = np.unique(conditions)
+    condition_index = np.searchsorted(names, conditions)
+    seeds = np.unique(np.concatenate([pairs["seed_solved"], pairs["seed_failed"]]))
+    first = np.searchsorted(seeds, pairs["seed_solved"].to_numpy())
+    second = np.searchsorted(seeds, pairs["seed_failed"].to_numpy())
+    draws = {"condition": [], "seed": [], "crossed": []}
+    for _ in range(resamples):
+        c = np.bincount(rng.integers(0, len(names), len(names)), minlength=len(names))[condition_index]
+        w = np.bincount(rng.integers(0, len(seeds), len(seeds)), minlength=len(seeds))
+        s = w[first] * w[second]
+        for name, weight in (("condition", c), ("seed", s), ("crossed", c * s)):
+            if weight.sum() > 0:
+                draws[name].append(np.average(values, weights=weight))
+    return {name: np.percentile(d, [2.5, 97.5]) for name, d in draws.items()}
+
+
 def within_condition_auc(data, predictor, rng, resamples=2000):
     """Concordance between `predictor` and reaching the criterion among runs of the same
-    condition (higher predictor, more likely solved), using only conditions with both
-    outcomes; the interval resamples conditions."""
-    pairs = []
-    for _, g in data.groupby(CONDITION):
-        solved = g.loc[g["solved"], predictor].to_numpy()
-        failed = g.loc[~g["solved"], predictor].to_numpy()
-        if len(solved) and len(failed):
-            pairs.append(
-                (solved[:, None] > failed[None, :]) + 0.5 * (solved[:, None] == failed[None, :])
-            )
-    if not pairs:
+    condition (higher predictor, more likely solved), over conditions with both
+    outcomes. Intervals resample conditions (prespecified), seeds, and both crossed."""
+    pairs = within_condition_pairs(data, predictor)
+    if pairs.empty:
         return {"conditions": 0}
-    draws = [
-        np.concatenate([pairs[i].ravel() for i in rng.integers(0, len(pairs), len(pairs))]).mean()
-        for _ in range(resamples)
-    ]
-    low, high = np.percentile(draws, [2.5, 97.5])
-    return {
-        "conditions": len(pairs),
-        "runs": int(sum(p.shape[0] + p.shape[1] for p in pairs)),
-        "pairs": int(sum(p.size for p in pairs)),
-        "auc": np.concatenate([p.ravel() for p in pairs]).mean(),
-        "auc_low": low,
-        "auc_high": high,
+    intervals = pair_intervals(pairs, pairs["score"].to_numpy(), rng, resamples)
+    runs = data[data.groupby(CONDITION)["solved"].transform(lambda v: 0 < v.sum() < len(v))]
+    result = {
+        "conditions": pairs["condition"].nunique(),
+        "runs": len(runs),
+        "pairs": len(pairs),
+        "auc": pairs["score"].mean(),
     }
+    for name, (low, high) in intervals.items():
+        result[f"{name}_low"], result[f"{name}_high"] = low, high
+    return result
+
+
+def paired_difference(data, first, second, rng, resamples=2000):
+    """Difference in within-condition concordance between two predictors on the same pairs."""
+    a = within_condition_pairs(data, first)
+    b = within_condition_pairs(data, second)
+    difference = a["score"].to_numpy() - b["score"].to_numpy()
+    intervals = pair_intervals(a, difference, rng, resamples)
+    result = {"difference": difference.mean()}
+    for name, (low, high) in intervals.items():
+        result[f"{name}_low"], result[f"{name}_high"] = low, high
+    return result
+
+
+def per_condition_auc(data, predictor):
+    pairs = within_condition_pairs(data, predictor)
+    table = pairs.groupby("condition")["score"].agg(auc="mean", pairs="size").reset_index()
+    return table

@@ -2,7 +2,9 @@
 
 - more_seeds: confirmatory test, on seeds 5–19 only, that within mixed conditions the
   update-100 state slope ranks runs reaching the validation criterion above runs that
-  do not, while the update-100 validation loss does not.
+  do not, while the update-100 validation loss does not. The prespecified interval
+  resamples conditions; seed and crossed intervals are reported as sensitivity checks,
+  with the paired slope-minus-loss difference and the concordance of each condition.
 - long_budget: how many of the conditions below the 5000-update ceiling reach the
   criterion within 20 000 updates.
 - chrono_mismatch: success and time to solve with chrono horizon T/4 and 4T against
@@ -25,8 +27,12 @@ def confirmatory(root, rng):
     rows = {}
     for predictor in (prediction.PRIMARY, "negative_log_landmark_loss"):
         rows[predictor] = prediction.within_condition_auc(data, predictor, rng)
+    rows["slope minus loss"] = prediction.paired_difference(
+        data, prediction.PRIMARY, "negative_log_landmark_loss", rng
+    )
+    per_condition = prediction.per_condition_auc(data, prediction.PRIMARY)
     solved = data.groupby(CONDITION)["solved"].agg(["sum", "size"]).reset_index()
-    return pd.DataFrame(rows).T, solved, data
+    return pd.DataFrame(rows).T, solved, data, per_condition
 
 
 def long_budget(root):
@@ -64,7 +70,8 @@ def available(root, plan):
 
 def run_all(root, out, rng):
     if available(root, "more_seeds"):
-        auc, solved, data = confirmatory(root, rng)
+        auc, solved, data, per_condition = confirmatory(root, rng)
+        per_condition.to_csv(os.path.join(out, "confirmatory_per_condition.csv"), index=False)
         mixed = data.groupby(CONDITION)["solved"].transform(lambda s: 0 < s.sum() < len(s))
         figures.within_condition(data[mixed], os.path.join(out, "within_condition_seeds_5_19.pdf"))
         auc.to_csv(os.path.join(out, "confirmatory_within_condition.csv"))

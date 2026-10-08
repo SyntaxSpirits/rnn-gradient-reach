@@ -130,7 +130,7 @@ def main(root):
     columns = ["runs", "events", "baseline_log_loss", "full_log_loss", "gain", "gain_low", "gain_high"]
     with pd.option_context("display.width", 220, "display.max_columns", 20):
         print(table[columns + ["crossed_low", "crossed_high", "groups_with_gain", "groups"]].round(3))
-        print(within[["conditions", "runs", "auc", "auc_low", "auc_high"]].round(3))
+        print(within[["conditions", "runs", "auc", "condition_low", "condition_high", "seed_low", "seed_high"]].round(3))
         print(pd.Series(hazard).round(3).to_string())
     followup.run_all(root, out, rng)
 
