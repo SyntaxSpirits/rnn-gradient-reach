@@ -48,14 +48,12 @@ impl Output {
             .collect()
     }
 
+    /// Writes the run row last, so that a run counts as completed only when all its
+    /// other output is on disk. A run interrupted before that is rerun on resume, which
+    /// may repeat identical history and probe rows.
     pub fn write(&mut self, o: &Outcome) -> io::Result<()> {
         let key = o.config.key();
-        let solved = o.solved_at.map_or(String::new(), |s| s.to_string());
-        writeln!(
-            self.runs,
-            "{key},{solved},{},{},{},{:.1}",
-            o.updates, o.test_loss, o.test_metric, o.seconds
-        )?;
+        self.write_curves(o)?;
         for e in &o.history {
             writeln!(self.history, "{key},{},{},{}", e.update, e.loss, e.metric)?;
         }
@@ -72,11 +70,15 @@ impl Output {
                 values[2]
             )?;
         }
-        self.write_curves(o)?;
-        for f in [&mut self.runs, &mut self.history, &mut self.probes] {
-            f.flush()?;
-        }
-        Ok(())
+        self.history.flush()?;
+        self.probes.flush()?;
+        let solved = o.solved_at.map_or(String::new(), |s| s.to_string());
+        writeln!(
+            self.runs,
+            "{key},{solved},{},{},{},{:.1}",
+            o.updates, o.test_loss, o.test_metric, o.seconds
+        )?;
+        self.runs.flush()
     }
 
     fn write_curves(&self, o: &Outcome) -> io::Result<()> {

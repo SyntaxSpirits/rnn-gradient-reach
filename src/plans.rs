@@ -10,7 +10,105 @@ const MAIN_LENGTHS: [(Task, [usize; 3]); 2] = [
     (Task::Recall, [30, 45, 250]),
 ];
 
-pub const NAMES: [&str; 3] = ["calibrate", "calibrate_long", "main"];
+/// Conventionally initialised conditions that solved fewer than 5 of 5 runs within
+/// 5000 updates in the main grid, at every length except the longest of each task.
+const BELOW_CEILING: [(Task, usize, Arch, &[Regulariser]); 7] = [
+    (
+        Task::Adding,
+        100,
+        Arch::Lstm,
+        &[
+            Regulariser::RecurrentDropout,
+            Regulariser::VariationalDropout,
+            Regulariser::UpdateDropout,
+            Regulariser::ZoneoutCell,
+            Regulariser::ZoneoutBoth,
+        ],
+    ),
+    (
+        Task::Adding,
+        200,
+        Arch::Gru,
+        &[Regulariser::VariationalDropout],
+    ),
+    (Task::Adding, 200, Arch::Lstm, &Regulariser::ALL),
+    (
+        Task::Recall,
+        30,
+        Arch::Gru,
+        &[
+            Regulariser::None,
+            Regulariser::RecurrentDropout,
+            Regulariser::VariationalDropout,
+            Regulariser::UpdateDropout,
+        ],
+    ),
+    (
+        Task::Recall,
+        30,
+        Arch::Lstm,
+        &[
+            Regulariser::RecurrentDropout,
+            Regulariser::VariationalDropout,
+            Regulariser::UpdateDropout,
+        ],
+    ),
+    (
+        Task::Recall,
+        45,
+        Arch::Gru,
+        &[
+            Regulariser::None,
+            Regulariser::RecurrentDropout,
+            Regulariser::VariationalDropout,
+            Regulariser::UpdateDropout,
+            Regulariser::ZoneoutHidden,
+        ],
+    ),
+    (Task::Recall, 45, Arch::Lstm, &Regulariser::ALL),
+];
+
+/// Conditions of the main grid in which some but not all of the five runs solved the
+/// task; all are conventionally initialised.
+const MIXED: [(Task, usize, Arch, Regulariser); 13] = [
+    (Task::Adding, 100, Arch::Lstm, Regulariser::RecurrentDropout),
+    (Task::Adding, 100, Arch::Lstm, Regulariser::UpdateDropout),
+    (Task::Adding, 100, Arch::Lstm, Regulariser::ZoneoutBoth),
+    (Task::Adding, 100, Arch::Lstm, Regulariser::ZoneoutCell),
+    (
+        Task::Adding,
+        200,
+        Arch::Gru,
+        Regulariser::VariationalDropout,
+    ),
+    (Task::Recall, 30, Arch::Gru, Regulariser::None),
+    (Task::Recall, 30, Arch::Lstm, Regulariser::RecurrentDropout),
+    (Task::Recall, 30, Arch::Lstm, Regulariser::UpdateDropout),
+    (
+        Task::Recall,
+        30,
+        Arch::Lstm,
+        Regulariser::VariationalDropout,
+    ),
+    (Task::Recall, 45, Arch::Lstm, Regulariser::UpdateDropout),
+    (
+        Task::Recall,
+        45,
+        Arch::Lstm,
+        Regulariser::VariationalDropout,
+    ),
+    (Task::Recall, 45, Arch::Lstm, Regulariser::ZoneoutBoth),
+    (Task::Recall, 45, Arch::Lstm, Regulariser::ZoneoutHidden),
+];
+
+pub const NAMES: [&str; 6] = [
+    "calibrate",
+    "calibrate_long",
+    "main",
+    "long_budget",
+    "chrono_mismatch",
+    "more_seeds",
+];
 
 /// The runs of a named plan; `None` for an unknown name.
 pub fn plan(name: &str) -> Option<Vec<Config>> {
@@ -45,6 +143,66 @@ pub fn plan(name: &str) -> Option<Vec<Config>> {
                             }
                         }
                     }
+                }
+            }
+            configs
+        }
+        "long_budget" => {
+            let mut configs = Vec::new();
+            for seed in 0..5 {
+                for (task, length, arch, regularisers) in BELOW_CEILING {
+                    for &regulariser in regularisers {
+                        if arch.supports(regulariser) {
+                            let mut c = Config::new(
+                                arch,
+                                task,
+                                length,
+                                Init::Conventional,
+                                regulariser,
+                                seed,
+                            );
+                            c.max_updates = 20_000;
+                            configs.push(c);
+                        }
+                    }
+                }
+            }
+            configs
+        }
+        "chrono_mismatch" => {
+            let mut configs = Vec::new();
+            for seed in 0..5 {
+                for arch in Arch::ALL {
+                    for init in Init::MISMATCHED {
+                        for (task, lengths) in MAIN_LENGTHS {
+                            for length in lengths {
+                                configs.push(Config::new(
+                                    arch,
+                                    task,
+                                    length,
+                                    init,
+                                    Regulariser::None,
+                                    seed,
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+            configs
+        }
+        "more_seeds" => {
+            let mut configs = Vec::new();
+            for seed in 5..20 {
+                for (task, length, arch, regulariser) in MIXED {
+                    configs.push(Config::new(
+                        arch,
+                        task,
+                        length,
+                        Init::Conventional,
+                        regulariser,
+                        seed,
+                    ));
                 }
             }
             configs

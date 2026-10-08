@@ -1,4 +1,4 @@
-use crate::config::{Arch, Config, Init, Regulariser};
+use crate::config::{Arch, Config, Regulariser};
 use ndarray::{s, Array2};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -24,20 +24,20 @@ pub enum RnnGradients {
 }
 
 impl Rnn {
-    /// Builds a one-layer network. Biases are set on `b_ih`; `b_hh` stays zero, so the
-    /// stated value is the effective bias.
-    #[allow(clippy::too_many_arguments)]
+    /// Builds a one-layer network. Without a chrono horizon the LSTM forget-gate bias is
+    /// 1 and all other biases 0; with horizon T_max the gate biases follow chrono
+    /// initialisation. Biases are set on `b_ih`; `b_hh` stays zero, so the stated value
+    /// is the effective bias.
     pub fn new(
         arch: Arch,
         input: usize,
         hidden: usize,
         regulariser: Regulariser,
         rate: f64,
-        init: Init,
-        t_max: usize,
+        chrono_horizon: Option<usize>,
         rng: &mut StdRng,
     ) -> Rnn {
-        let mut timescales = || -> Vec<f64> {
+        let mut timescales = |t_max: usize| -> Vec<f64> {
             (0..hidden)
                 .map(|_| rng.gen_range(1.0..(t_max - 1) as f64).ln())
                 .collect()
@@ -46,10 +46,10 @@ impl Rnn {
             Arch::Lstm => {
                 let mut net = LSTMNetwork::new(input, hidden, 1);
                 let b = &mut net.get_cells_mut()[0].b_ih;
-                match init {
-                    Init::Conventional => b.slice_mut(s![hidden..2 * hidden, ..]).fill(1.0),
-                    Init::Chrono => {
-                        for (j, log_u) in timescales().into_iter().enumerate() {
+                match chrono_horizon {
+                    None => b.slice_mut(s![hidden..2 * hidden, ..]).fill(1.0),
+                    Some(t_max) => {
+                        for (j, log_u) in timescales(t_max).into_iter().enumerate() {
                             b[[j, 0]] = -log_u;
                             b[[hidden + j, 0]] = log_u;
                         }
@@ -67,9 +67,9 @@ impl Rnn {
             }
             Arch::Gru => {
                 let mut net = GRUNetwork::new(input, hidden, 1);
-                if init == Init::Chrono {
+                if let Some(t_max) = chrono_horizon {
                     let b = &mut net.get_cells_mut()[0].b_iz;
-                    for (j, log_u) in timescales().into_iter().enumerate() {
+                    for (j, log_u) in timescales(t_max).into_iter().enumerate() {
                         b[[j, 0]] = -log_u;
                     }
                 }
@@ -211,8 +211,7 @@ impl Model {
             config.hidden,
             config.regulariser,
             config.rate,
-            config.init,
-            config.length,
+            config.init.chrono_horizon(config.length),
             &mut init_rng,
         );
         Model {
@@ -246,6 +245,7 @@ impl Model {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Init;
     use crate::tasks::Task;
 
     #[test]

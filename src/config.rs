@@ -12,8 +12,12 @@ pub enum Init {
     /// biases 0; GRU biases 0, so the update gate starts at 0.5.
     Conventional,
     /// Gate biases drawn so that unit j keeps its memory for about u_j steps,
-    /// u_j ~ U[1, T_max - 1] (Tallec & Ollivier, 2018).
+    /// u_j ~ U[1, T_max - 1] (Tallec & Ollivier, 2018), with T_max the task length.
     Chrono,
+    /// Chrono initialisation with T_max a quarter of the task length.
+    ChronoShort,
+    /// Chrono initialisation with T_max four times the task length.
+    ChronoLong,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -72,12 +76,26 @@ impl Arch {
 }
 
 impl Init {
+    /// The two initialisations of the main grid.
     pub const ALL: [Init; 2] = [Init::Conventional, Init::Chrono];
+    pub const MISMATCHED: [Init; 2] = [Init::ChronoShort, Init::ChronoLong];
 
     pub fn name(self) -> &'static str {
         match self {
             Init::Conventional => "conventional",
             Init::Chrono => "chrono",
+            Init::ChronoShort => "chrono-short",
+            Init::ChronoLong => "chrono-long",
+        }
+    }
+
+    /// T_max of chrono initialisation for a task of the given length.
+    pub fn chrono_horizon(self, length: usize) -> Option<usize> {
+        match self {
+            Init::Conventional => None,
+            Init::Chrono => Some(length),
+            Init::ChronoShort => Some((length / 4).max(3)),
+            Init::ChronoLong => Some(4 * length),
         }
     }
 }
@@ -171,7 +189,10 @@ impl Config {
         }
         let arch = Arch::ALL.into_iter().find(|a| a.name() == f[0])?;
         let task = Task::ALL.into_iter().find(|t| t.name() == f[1])?;
-        let init = Init::ALL.into_iter().find(|i| i.name() == f[3])?;
+        let init = Init::ALL
+            .into_iter()
+            .chain(Init::MISMATCHED)
+            .find(|i| i.name() == f[3])?;
         let regulariser = Regulariser::ALL.into_iter().find(|r| r.name() == f[4])?;
         let mut config = Config::new(
             arch,
