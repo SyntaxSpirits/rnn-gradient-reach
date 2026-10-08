@@ -17,12 +17,14 @@ REGULARISERS = [
 ]
 PANELS = [(a, i) for a in ("lstm", "gru") for i in ("conventional", "chrono")]
 
-plt.rcParams.update({"font.size": 9, "axes.titlesize": 10, "savefig.bbox": "tight"})
+plt.rcParams.update({"font.size": 8, "axes.titlesize": 8.5, "savefig.bbox": "tight"})
+
+TEXT_WIDTH = 6.3
 
 
 def outcomes(table, path):
     tasks = list(table["task"].unique())
-    fig, axes = plt.subplots(len(tasks), 1, figsize=(10, 3.6 * len(tasks)), squeeze=False)
+    fig, axes = plt.subplots(len(tasks), 1, figsize=(TEXT_WIDTH, 3.5 * len(tasks)), squeeze=False)
     for ax, task in zip(axes[:, 0], tasks):
         t = table[table["task"] == task]
         lengths = sorted(t["length"].unique())
@@ -38,19 +40,19 @@ def outcomes(table, path):
                 f"{int(row['solved'])}/{int(row['runs'])}\n{int(round(row['restricted_mean_time'], -2))}",
                 ha="center",
                 va="center",
-                fontsize=6.5,
+                fontsize=5.6,
                 color="white" if grid[r, c] > 0.6 else "black",
             )
         ax.imshow(grid, cmap="Greens", vmin=0, vmax=1, aspect="auto")
-        ax.set_yticks(range(len(REGULARISERS)), REGULARISERS)
+        ax.set_yticks(range(len(REGULARISERS)), [r.replace("_", " ") for r in REGULARISERS], fontsize=7)
         ax.set_xticks(
             range(len(columns)),
             [f"{a.upper()}\n{'conv.' if i == 'conventional' else 'chrono'}\nT={l}" for a, i, l in columns],
-            fontsize=7,
+            fontsize=6.5,
         )
         for boundary in range(len(lengths), len(columns), len(lengths)):
             ax.axvline(boundary - 0.5, color="white", lw=2)
-        ax.set_title(f"{task}: runs solved and restricted mean updates to solve (budget 5000)")
+        ax.set_title(f"{task}: runs reaching the criterion and restricted mean updates (budget 5000)")
     fig.tight_layout()
     fig.savefig(path, dpi=200)
     plt.close(fig)
@@ -63,7 +65,7 @@ def curves(frame, path, task, length, update, mode="eval"):
         & (frame["update"] == update)
         & (frame["mode"] == mode)
     ]
-    fig, axes = plt.subplots(2, 2, figsize=(9, 6.5), sharex=True, sharey=True)
+    fig, axes = plt.subplots(2, 2, figsize=(TEXT_WIDTH, 4.8), sharex=True, sharey=True)
     for ax, (arch, init) in zip(axes.flat, PANELS):
         g = c[(c["arch"] == arch) & (c["init"] == init)]
         for regulariser in REGULARISERS:
@@ -71,12 +73,13 @@ def curves(frame, path, task, length, update, mode="eval"):
             if r.empty:
                 continue
             mean = r.groupby("lag")["state_log_mean"].mean() / np.log(10)
-            ax.plot(mean.index, mean.to_numpy(), label=regulariser, lw=1.1)
+            ax.plot(mean.index, mean.to_numpy(), label=regulariser.replace("_", " "), lw=1.1)
         ax.set_title(f"{arch.upper()}, {init} initialisation")
-        ax.set_xlabel("lag k")
         ax.set_ylabel("log10 state-gradient norm")
-    axes[0, 0].legend(fontsize=7)
-    fig.suptitle(f"{task}, T = {length}, update {update}, {mode} mode, mean over seeds")
+    for ax in axes[-1]:
+        ax.set_xlabel("lag k")
+    axes[0, 0].legend(fontsize=6)
+    fig.suptitle(f"{task}, T = {length}, update {update}, {mode} mode, mean over seeds", fontsize=8.5)
     fig.savefig(path, dpi=200)
     plt.close(fig)
 
@@ -134,10 +137,10 @@ def within_condition(data, path):
         + ", "
         + data["arch"].str.upper()
         + ", "
-        + data["regulariser"]
+        + data["regulariser"].str.replace("_", " ")
     )
     labels = sorted(data["label"].unique())
-    fig, ax = plt.subplots(figsize=(7.5, 0.32 * len(labels) + 1.2))
+    fig, ax = plt.subplots(figsize=(TEXT_WIDTH, 0.3 * len(labels) + 1.0))
     for row, label in enumerate(labels):
         g = data[data["label"] == label]
         jitter = (np.arange(len(g)) % 3 - 1) * 0.12
