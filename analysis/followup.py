@@ -13,7 +13,7 @@ import os
 
 import pandas as pd
 
-from . import prediction, reach
+from . import figures, prediction, reach
 from .data import CONDITION, censored_time, load, load_runs
 
 
@@ -26,7 +26,7 @@ def confirmatory(root, rng):
     for predictor in (prediction.PRIMARY, "negative_log_landmark_loss"):
         rows[predictor] = prediction.within_condition_auc(data, predictor, rng)
     solved = data.groupby(CONDITION)["solved"].agg(["sum", "size"]).reset_index()
-    return pd.DataFrame(rows).T, solved, summaries
+    return pd.DataFrame(rows).T, solved, data
 
 
 def long_budget(root):
@@ -64,7 +64,9 @@ def available(root, plan):
 
 def run_all(root, out, rng):
     if available(root, "more_seeds"):
-        auc, solved, _ = confirmatory(root, rng)
+        auc, solved, data = confirmatory(root, rng)
+        mixed = data.groupby(CONDITION)["solved"].transform(lambda s: 0 < s.sum() < len(s))
+        figures.within_condition(data[mixed], os.path.join(out, "within_condition_seeds_5_19.pdf"))
         auc.to_csv(os.path.join(out, "confirmatory_within_condition.csv"))
         solved.to_csv(os.path.join(out, "more_seeds_solved.csv"), index=False)
         print("confirmatory within-condition concordance, seeds 5-19")

@@ -115,9 +115,14 @@ def main(root):
     hazard = survival.hazard_effect(data, prediction.PRIMARY, rng)
     pd.Series(hazard).to_csv(os.path.join(out, "hazard.csv"), header=["value"])
 
-    figures.outcomes(outcomes, os.path.join(out, "outcomes.png"))
-    figures.slope_vs_time(data, os.path.join(out, "slope_vs_time.png"))
-    figures.prediction(predictions, os.path.join(out, "prediction.png"))
+    for extension in ("png", "pdf"):
+        figures.outcomes(outcomes, os.path.join(out, f"outcomes.{extension}"))
+        figures.slope_vs_time(data, os.path.join(out, f"slope_vs_time.{extension}"))
+        figures.prediction(predictions, os.path.join(out, f"prediction.{extension}"))
+        for update in (0, prediction.LANDMARK):
+            figures.curves(
+                curves, os.path.join(out, f"curves_recall_45_update{update}.{extension}"), "recall", 45, update
+            )
     for task, length in runs[["task", "length"]].drop_duplicates().itertuples(index=False):
         for update in (0, prediction.LANDMARK):
             figures.curves(curves, os.path.join(out, f"curves_{task}_{length}_update{update}.png"), task, length, update)

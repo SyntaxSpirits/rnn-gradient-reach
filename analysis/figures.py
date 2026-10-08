@@ -121,3 +121,38 @@ def prediction(predictions, path):
     axes[0].legend(fontsize=7)
     fig.savefig(path, dpi=200)
     plt.close(fig)
+
+
+def within_condition(data, path):
+    """Update-100 slope of every run in the conditions with mixed outcomes; filled
+    markers reached the criterion."""
+    data = data.copy()
+    data["label"] = (
+        data["task"]
+        + " T="
+        + data["length"].astype(str)
+        + ", "
+        + data["arch"].str.upper()
+        + ", "
+        + data["regulariser"]
+    )
+    labels = sorted(data["label"].unique())
+    fig, ax = plt.subplots(figsize=(7.5, 0.32 * len(labels) + 1.2))
+    for row, label in enumerate(labels):
+        g = data[data["label"] == label]
+        jitter = (np.arange(len(g)) % 3 - 1) * 0.12
+        solved = g["solved"].to_numpy()
+        ax.scatter(g["state_slope"][solved], row + jitter[solved], s=16, color="C2", label="reached criterion" if row == 0 else None)
+        ax.scatter(
+            g["state_slope"][~solved],
+            row + jitter[~solved],
+            s=16,
+            facecolors="none",
+            edgecolors="C3",
+            label="did not" if row == 0 else None,
+        )
+    ax.set_yticks(range(len(labels)), labels, fontsize=7)
+    ax.set_xlabel("state-gradient log-slope per step at update 100 (evaluation mode)")
+    ax.legend(fontsize=7, loc="lower right")
+    fig.savefig(path)
+    plt.close(fig)
