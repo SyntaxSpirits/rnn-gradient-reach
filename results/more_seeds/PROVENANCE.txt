@@ -4,3 +4,4 @@ rustc: rustc 1.86.0 (05f9846f8 2025-03-31) (Homebrew)
 machine: Apple M1 Pro, 8 cores, macOS 14.5
 started: 2026-10-08T02:16:37Z
 command: rnn-gradient-reach plan more_seeds --jobs 8
+finished: 2026-10-08T03:02:25Z
