@@ -54,7 +54,7 @@ cargo run --release -- plan chrono_mismatch
 cargo run --release -- run lstm,recall,30,chrono,zoneout_cell,0.15,0,64,5000
 
 uv venv .venv && uv pip install -r analysis/requirements.txt
-.venv/bin/python -m analysis results/main
+.venv/bin/python -m analysis results
 ```
 
 Every run is seeded from its key, so any row of `results/*/runs.csv` can be rerun
@@ -63,9 +63,10 @@ exactly. Plans resume where they stopped.
 ## Results layout
 
 `results/<plan>/runs.csv`, `history.csv` and `probes.csv` hold one row per run, per
-validation and per probe; `results/main/PROVENANCE.txt` records the code revision,
-toolchain and machine. The per-run gradient curves (`curves/`, 140 MB) are archived
-separately. The analysis writes tables and figures to `results/<plan>/analysis/`.
+validation and per probe; `PROVENANCE.txt` in the main and follow-up plans records the code revision,
+toolchain and machine. The per-run gradient curves (`results/<plan>/curves/`, about
+220 MB for all plans) are archived separately with the summaries. The analysis reads all
+plans in `results/` and writes tables and figures to `results/analysis/`.
 
 ## Licence
 
