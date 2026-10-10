@@ -65,7 +65,8 @@ exactly. Plans resume where they stopped.
 `results/<plan>/runs.csv`, `history.csv` and `probes.csv` hold one row per run, per
 validation and per probe; `PROVENANCE.txt` in the main and follow-up plans records the code revision,
 toolchain and machine. The per-run gradient curves (`results/<plan>/curves/`, about
-220 MB for all plans) are archived separately with the summaries. The analysis reads all
+220 MB for all plans) are archived with the summaries at
+[doi:10.5281/zenodo.23285386](https://doi.org/10.5281/zenodo.23285386). The analysis reads all
 plans in `results/` and writes tables and figures to `results/analysis/`.
 
 ## Licence
