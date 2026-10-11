@@ -42,6 +42,19 @@ Planned on 2026-10-08, after the main grid, before any of these runs:
   T, to see how much of the advantage of chrono initialisation depends on knowing the
   task length. Descriptive.
 
+## PyTorch replication
+
+After the main analysis, the unregularised conditions of the main grid (both architectures and initialisations, all
+six task lengths, seeds 0–4) were rerun with PyTorch's own `nn.LSTM` and `nn.GRU` (PyTorch 2.9.1, default weight
+initialisation, single precision, independently drawn data; same gate biases, tasks, optimiser, batch, clipping,
+budget, validation schedule and criteria). `pytorch_replication/replicate.py` writes `results/pytorch/runs.csv`;
+`pytorch_replication/compare.py` sets it against the rust-lstm runs:
+
+```bash
+python pytorch_replication/replicate.py results/pytorch --workers 7
+python pytorch_replication/compare.py results/main/runs.csv results/pytorch/runs.csv
+```
+
 ## Reproducing
 
 ```bash
